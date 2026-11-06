@@ -89,7 +89,7 @@ test("alert delivery", async () => {
   const { body } = await pair(s);
   const r = await s.call(
     "/alert",
-    { rule: "CPU temp", value: 92, threshold: 85, unit: "°C", pc_name: "GAMING-PC" },
+    { rule: "cpu_temp", value: 92, threshold: 85, unit: "C", pc_name: "GAMING-PC" },
     { "X-Device-Key": body.device_key },
   );
   assert.equal(r.status, 200);
@@ -99,7 +99,7 @@ test("alert delivery", async () => {
 
 test("alert with bad or missing key is 401", async () => {
   const s = setup();
-  const body = { rule: "r", value: 1 };
+  const body = { rule: "cpu_load", value: 1 };
   assert.equal((await s.call("/alert", body)).status, 401);
   assert.equal((await s.call("/alert", body, { "X-Device-Key": "nope" })).status, 401);
   assert.equal(s.sent.length, 0);
@@ -109,7 +109,7 @@ test("daily limit, one note, resets next UTC day", async () => {
   const s = setup();
   const { body } = await pair(s);
   const h = { "X-Device-Key": body.device_key };
-  const a = { rule: "CPU temp", value: 90, threshold: 85, unit: "°C" };
+  const a = { rule: "cpu_temp", value: 90, threshold: 85, unit: "C" };
   const before = s.sent.length;
   for (let i = 0; i < FREE_DAILY_LIMIT; i++) assert.equal((await s.call("/alert", a, h)).status, 200);
   assert.equal(s.sent.length - before, FREE_DAILY_LIMIT);
@@ -125,8 +125,23 @@ test("/unlink revokes the device key", async () => {
   const s = setup();
   const { body } = await pair(s);
   await s.say("/unlink GAMING-PC");
-  const r = await s.call("/alert", { rule: "r", value: 1 }, { "X-Device-Key": body.device_key });
+  const r = await s.call("/alert", { rule: "cpu_load", value: 1 }, { "X-Device-Key": body.device_key });
   assert.equal(r.status, 401);
   await s.say("/pcs");
   assert.match(s.sent.at(-1).text, /No linked/);
+});
+
+test("alert rejects unknown rule, non-numeric value and keeps the paired PC name", async () => {
+  const s = setup();
+  const { body } = await pair(s);
+  const h = { "X-Device-Key": body.device_key };
+  const before = s.sent.length;
+  assert.equal((await s.call("/alert", { rule: "Click http://evil", value: 1 }, h)).status, 400);
+  assert.equal((await s.call("/alert", { rule: "cpu_temp", value: "99 visit x.y" }, h)).status, 400);
+  assert.equal((await s.call("/alert", { rule: "cpu_temp", value: 9, threshold: "x" }, h)).status, 400);
+  assert.equal((await s.call("/alert", { rule: "__proto__", value: 1 }, h)).status, 400);
+  assert.equal(s.sent.length, before);
+  const r = await s.call("/alert", { rule: "ram_load", value: 97, pc_name: "Spoofed text" }, h);
+  assert.equal(r.status, 200);
+  assert.equal(s.sent.at(-1).text, "🔥 GAMING-PC: RAM 97%");
 });

@@ -6,6 +6,19 @@ export const FREE_DAILY_LIMIT = 10; // alerts per chat per UTC day (Pro comes la
 export const CODE_TTL_SEC = 600;
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
+// Rule keys sent by the backend (backend/src/alerts.rs Rule::key) and their display units.
+export const RULES = {
+  cpu_temp: ["CPU temp", "°C"],
+  gpu_temp: ["GPU temp", "°C"],
+  cpu_load: ["CPU load", "%"],
+  gpu_load: ["GPU load", "%"],
+  ram_load: ["RAM", "%"],
+  vram_load: ["VRAM", "%"],
+  disk_load: ["Disk", "%"],
+  battery_low: ["Battery", "%"],
+};
+const isNum = (v) => typeof v === "number" && Number.isFinite(v);
+
 const GREETING = {
   en: "Hi! I send PC Health Remote alerts to your phone.\n\n1. Send /link to get a 6-character code.\n2. Enter it in the PC tray app.\n\nCommands: /link, /pcs, /unlink <name>",
   ru: "Привет! Я присылаю уведомления PC Health Remote на телефон.\n\n1. Отправьте /link, чтобы получить 6-значный код.\n2. Введите его в трей-приложении на ПК.\n\nКоманды: /link, /pcs, /unlink <имя>",
@@ -159,7 +172,11 @@ async function handleAlert(req, env, f, now) {
   } catch {
     return json({ error: "bad request" }, 400);
   }
-  if (!b || typeof b.rule !== "string" || b.value === undefined) return json({ error: "bad request" }, 400);
+  // Only known rules and numeric values: a paired device cannot push arbitrary text to the chat.
+  const rule = b && Object.hasOwn(RULES, b.rule) ? RULES[b.rule] : null;
+  if (!rule || !isNum(b.value) || (b.threshold != null && !isNum(b.threshold))) {
+    return json({ error: "bad request" }, 400);
+  }
   const kv = env.PHR;
   const user = await getUser(kv, dev.chat);
   const t = T[user.lang];
@@ -176,10 +193,9 @@ async function handleAlert(req, env, f, now) {
   }
   c.n++;
   await kv.put(ckey, JSON.stringify(c), { expirationTtl: 172800 });
-  const name = String(b.pc_name || dev.pc_name);
-  const unit = b.unit ? String(b.unit) : "";
-  let text = "🔥 " + name + ": " + b.rule + " " + b.value + unit;
-  if (b.threshold !== undefined && b.threshold !== null) text += " (limit " + b.threshold + unit + ")";
+  const [label, unit] = rule;
+  let text = "🔥 " + dev.pc_name + ": " + label + " " + b.value + unit;
+  if (b.threshold != null) text += " (limit " + b.threshold + unit + ")";
   const ok = await send(env, f, dev.chat, text);
   return ok ? json({ ok: true }) : json({ error: "delivery failed" }, 502);
 }
