@@ -9,4 +9,4 @@ Stores only chat id, language, source tag, device keys, PC names and counters
 
 ## Test
 
-    node --test telegram/
+    cd telegram && node --test
