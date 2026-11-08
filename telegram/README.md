@@ -12,6 +12,20 @@ invoice, Pro = no daily limit and up to 5 PCs (free: 1 PC). `/status` shows the 
 Admin-only `/stats` and `/refund <charge_id>`: set the secret `ADMIN_CHAT_ID`
 (`wrangler secret put ADMIN_CHAT_ID`). The webhook must allow `pre_checkout_query` updates.
 
+Free users get the Pro offer (with the invoice link) when they hit the daily alert limit (at most once per
+UTC day, reusing the counter's one-note flag, no extra KV writes) and when they try to pair a PC over the limit.
+
+`/paysupport` (required by Telegram for Stars payments), `/terms` and `/support` answer in EN or RU.
+
+## Bot commands (setMyCommands)
+
+The deploy workflow does not register the bot menu yet. After a deploy, the admin sends `/setcommands`
+to the bot once: it calls `setMyCommands` for the default (EN) and `ru` menus from `COMMANDS` in `worker.js`:
+
+    /link /pcs /unlink /status /pro /terms /support /paysupport
+
+(A step in `.github/workflows/telegram.yml` could do the same after `setWebhook`; not added here.)
+
 ## Test
 
     cd telegram && node --test

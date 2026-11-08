@@ -81,6 +81,8 @@ function setup(t0 = Date.UTC(2026, 0, 1, 12), { counter = false } = {}) {
   return { env, sent, calls, clock, call, say, upd, pay };
 }
 
+const msgs = (s) => s.calls.filter((c) => c.method === "sendMessage");
+
 async function pair(s, name = "GAMING-PC", chat = 1) {
   await s.say("/link", {}, chat);
   const code = /: ([A-Z0-9]{6})/.exec(s.sent.at(-1).text)[1];
@@ -161,13 +163,13 @@ test("daily limit, one note, resets next UTC day", async () => {
   const { body } = await pair(s);
   const h = { "X-Device-Key": body.device_key };
   const a = { rule: "cpu_temp", value: 90, threshold: 85, unit: "C" };
-  const before = s.sent.length;
+  const before = msgs(s).length;
   for (let i = 0; i < FREE_DAILY_LIMIT; i++) assert.equal((await s.call("/alert", a, h)).status, 200);
-  assert.equal(s.sent.length - before, FREE_DAILY_LIMIT);
+  assert.equal(msgs(s).length - before, FREE_DAILY_LIMIT);
   assert.equal((await s.call("/alert", a, h)).status, 429);
   assert.equal((await s.call("/alert", a, h)).status, 429);
-  assert.equal(s.sent.length - before, FREE_DAILY_LIMIT + 1);
-  assert.match(s.sent.at(-1).text, /limit/i);
+  assert.equal(msgs(s).length - before, FREE_DAILY_LIMIT + 1);
+  assert.match(msgs(s).at(-1).body.text, /limit/i);
   s.clock.t += 24 * 3600 * 1000;
   assert.equal((await s.call("/alert", a, h)).status, 200);
 });
@@ -327,11 +329,11 @@ test("Durable Object counter: limit enforced, one note, resets next UTC day, /st
   const { body } = await pair(s);
   const h = { "X-Device-Key": body.device_key };
   const a = { rule: "cpu_temp", value: 90 };
-  const before = s.sent.length;
+  const before = msgs(s).length;
   for (let i = 0; i < FREE_DAILY_LIMIT; i++) assert.equal((await s.call("/alert", a, h)).status, 200);
   assert.equal((await s.call("/alert", a, h)).status, 429);
   assert.equal((await s.call("/alert", a, h)).status, 429);
-  assert.equal(s.sent.length - before, FREE_DAILY_LIMIT + 1); // 10 alerts + one limit note
+  assert.equal(msgs(s).length - before, FREE_DAILY_LIMIT + 1); // 10 alerts + one limit note
   await s.say("/status");
   assert.match(s.sent.at(-1).text, new RegExp(String(FREE_DAILY_LIMIT)));
   s.clock.t += 24 * 3600 * 1000;
@@ -346,4 +348,88 @@ test("Durable Object counter forgets the day via its alarm", async () => {
   assert.ok(obj.storage.alarm > Date.now());
   await obj.alarm();
   assert.equal(obj.storage.data.size, 0);
+});
+
+// Issue #31: Stars payment commands and Pro upsell.
+test("/paysupport, /terms, /support answer in EN and RU", async () => {
+  const s = setup();
+  for (const [lang, re] of [
+    ["en", { paysupport: /Payment help[\s\S]*admin/, terms: /Terms[\s\S]*30 days[\s\S]*Refund[\s\S]*warranty/, support: /Questions/ }],
+    ["ru", { paysupport: /Помощь с оплатой[\s\S]*администратор/, terms: /Условия[\s\S]*30 дней[\s\S]*Возврат[\s\S]*без гарантий/, support: /Вопросы/ }],
+  ]) {
+    for (const cmd of ["paysupport", "terms", "support"]) {
+      await s.say("/" + cmd, { language_code: lang });
+      assert.match(s.sent.at(-1).text, re[cmd], lang + " /" + cmd);
+    }
+  }
+  await s.say("/support@phr_bot");
+  assert.match(s.sent.at(-1).text, /https:\/\/github\.com\/ataman-lab\/pc-health-remote\/issues/);
+  await s.say("/paysupport");
+  assert.match(s.sent.at(-1).text, /github\.com\/ataman-lab\/pc-health-remote\/issues/);
+  await s.say("/terms");
+  assert.match(s.sent.at(-1).text, new RegExp(PRO_PRICE_STARS + " Stars"));
+  assert.equal(s.calls.some((c) => c.method !== "sendMessage"), false); // no invoices, no refunds
+});
+
+test("/setcommands is admin only and registers EN + RU menus", async () => {
+  const s = setup();
+  await s.say("/setcommands", {}, 1);
+  assert.equal(s.calls.some((c) => c.method === "setMyCommands"), false);
+  await s.say("/setcommands", {}, 999);
+  const sc = s.calls.filter((c) => c.method === "setMyCommands");
+  assert.equal(sc.length, 2);
+  assert.equal(sc[0].body.language_code, undefined);
+  assert.equal(sc[1].body.language_code, "ru");
+  for (const c of sc) {
+    const names = c.body.commands.map((x) => x.command);
+    for (const n of ["paysupport", "terms", "support", "pro", "status"]) assert.ok(names.includes(n), n);
+  }
+  assert.equal(s.sent.at(-1).text, "Commands set");
+});
+
+for (const counter of [false, true]) {
+  test("upsell at the daily alert limit: once per day, with the Pro invoice (" + (counter ? "Durable Object" : "KV") + " counter)", async () => {
+    const s = setup(undefined, { counter });
+    const { body } = await pair(s);
+    const h = { "X-Device-Key": body.device_key };
+    const a = { rule: "cpu_temp", value: 90 };
+    for (let i = 0; i < FREE_DAILY_LIMIT; i++) await s.call("/alert", a, h);
+    const inv0 = s.calls.filter((c) => c.method === "createInvoiceLink").length;
+    const kvBefore = s.env.PHR.writes;
+    for (let i = 0; i < 5; i++) assert.equal((await s.call("/alert", a, h)).status, 429);
+    const inv = s.calls.filter((c) => c.method === "createInvoiceLink");
+    assert.equal(inv.length - inv0, 1); // one upsell for 5 dropped alerts
+    assert.equal(inv.at(-1).body.payload, "pro30:1");
+    assert.deepEqual(inv.at(-1).body.prices, [{ label: "Pro 30d", amount: PRO_PRICE_STARS }]);
+    const note = msgs(s).at(-1).body.text;
+    assert.match(note, /limit/i);
+    assert.match(note, /https:\/\/t\.me\/\$inv/);
+    assert.equal(s.env.PHR.writes - kvBefore, counter ? 0 : 1); // same write budget as the plain note
+    s.clock.t += 24 * 3600 * 1000; // next day: one more upsell after the limit
+    for (let i = 0; i < FREE_DAILY_LIMIT + 3; i++) await s.call("/alert", a, h);
+    assert.equal(s.calls.filter((c) => c.method === "createInvoiceLink").length - inv0, 2);
+  });
+}
+
+test("upsell when a free user pairs a second PC; none for Pro or re-pair", async () => {
+  const s = setup();
+  await pair(s, "A", 1);
+  await s.say("/link", { language_code: "ru" }, 1);
+  const code = /: ([A-Z0-9]{6})/.exec(s.sent.at(-1).text)[1];
+  const r = await s.call("/pair", { code, pc_name: "B" });
+  const body = await r.json();
+  assert.equal(r.status, 403);
+  assert.deepEqual(body, { error: "pc limit reached" }); // PC gets the same answer as before
+  const inv = s.calls.filter((c) => c.method === "createInvoiceLink");
+  assert.equal(inv.length, 1);
+  assert.equal(inv[0].body.payload, "pro30:1");
+  const note = msgs(s).at(-1).body;
+  assert.equal(note.chat_id, 1);
+  assert.match(note.text, /бесплатном тарифе[\s\S]*https:\/\/t\.me\/\$inv/);
+  assert.equal((await pair(s, "A", 1)).r.status, 200); // re-pair same name: no upsell
+  assert.equal(s.calls.filter((c) => c.method === "createInvoiceLink").length, 1);
+  await s.pay("ch1");
+  for (const n of ["B", "C", "D", "E"]) await pair(s, n);
+  assert.equal((await pair(s, "F")).r.status, 403); // Pro at 5 PCs: no upsell
+  assert.equal(s.calls.filter((c) => c.method === "createInvoiceLink").length, 1);
 });
