@@ -8,6 +8,7 @@ export const PRO_PERIOD_SEC = 2592000;
 export const FREE_MAX_PCS = 1;
 export const PRO_MAX_PCS = 5;
 export const CODE_TTL_SEC = 600;
+export const SUPPORT_WINDOW_SEC = 3600; // after /paysupport, the next free-text message goes to the admin
 export const SUPPORT_URL = "https://github.com/ataman-lab/pc-health-remote/issues";
 // Shown in the bot menu (setMyCommands via admin /setcommands). Telegram requires /paysupport for Stars bots.
 export const COMMANDS = {
@@ -68,11 +69,12 @@ const T = {
     pcLimit: "This PC was not linked: the free plan has " + FREE_MAX_PCS + " PC. Unlink one with /unlink <name>, or get Pro for up to " + PRO_MAX_PCS + " PCs.",
     pcLimitPro: "This PC was not linked: Pro allows up to " + PRO_MAX_PCS + " PCs. Unlink one with /unlink <name>.",
     paysupport:
-      "Payment help: write here what went wrong (date and amount) or open an issue: " + SUPPORT_URL +
-      "\nStars payments for Pro are refundable: we refund through Telegram (the admin uses the charge id). Pro is cancelled after a refund." +
+      "Payment help: in the next hour, send one message here with what went wrong (date and amount). It goes privately to the developer, who answers in this chat." +
+      "\nPro payments in Stars are refundable through Telegram. Refunding the current period also stops Pro and its renewal." +
       "\nTelegram support cannot help with purchases in this bot.",
+    sentToSupport: "Sent to the developer. You will get an answer here.",
     terms:
-      "Terms of PC Health Remote Pro\n1. Pro costs " + PRO_PRICE_STARS + " Stars per 30 days and renews until you cancel the subscription in Telegram.\n2. Pro removes the daily limit of " + FREE_DAILY_LIMIT + " alerts and allows up to " + PRO_MAX_PCS + " PCs.\n3. Refunds: ask via /paysupport, refunds are made in Telegram Stars.\n4. Alerts are best effort, no warranty: do not rely on them for safety-critical equipment.\n5. Stored: chat id, language, source tag, PC names and device keys, counters. /unlink removes a PC.\nThe app is free and open source (MIT).",
+      "Terms of PC Health Remote Pro\n1. Pro costs " + PRO_PRICE_STARS + " Stars per 30 days and renews until you cancel the subscription in Telegram. After Pro ends, linked PCs stay; the free limit of " + FREE_DAILY_LIMIT + " alerts/day applies again.\n2. Pro removes the daily limit of " + FREE_DAILY_LIMIT + " alerts and allows up to " + PRO_MAX_PCS + " PCs.\n3. Refunds: ask via /paysupport, refunds are made in Telegram Stars.\n4. Alerts are best effort, no warranty: do not rely on them for safety-critical equipment.\n5. Stored: chat id, language, source tag, PC names and device keys, counters, payment records (charge id, amount, date). /unlink removes a PC and its key.\nThe app is free and open source (MIT).",
     support: "Bug or idea? Open an issue: " + SUPPORT_URL + "\nPayment questions: /paysupport",
   },
   ru: {
@@ -92,11 +94,12 @@ const T = {
     pcLimit: "ПК не привязан: в бесплатном тарифе " + FREE_MAX_PCS + " ПК. Отвяжите лишний через /unlink <имя> или возьмите Pro (до " + PRO_MAX_PCS + " ПК).",
     pcLimitPro: "ПК не привязан: в Pro до " + PRO_MAX_PCS + " ПК. Отвяжите лишний через /unlink <имя>.",
     paysupport:
-      "Помощь с оплатой: напишите сюда, что случилось (дата и сумма), или создайте issue: " + SUPPORT_URL +
-      "\nОплату Pro в Stars можно вернуть: возврат делаем через Telegram (админ по id платежа). После возврата Pro отключается." +
+      "Помощь с оплатой: в течение часа отправьте сюда одно сообщение, что случилось (дата и сумма). Оно лично уйдёт разработчику, ответ придёт в этот чат." +
+      "\nОплату Pro в Stars можно вернуть через Telegram. Возврат за текущий период отключает Pro и его продление." +
       "\nПоддержка Telegram не помогает с покупками в этом боте.",
+    sentToSupport: "Отправлено разработчику. Ответ придёт сюда.",
     terms:
-      "Условия PC Health Remote Pro\n1. Pro стоит " + PRO_PRICE_STARS + " Stars за 30 дней и продлевается, пока вы не отмените подписку в Telegram.\n2. Pro снимает лимит " + FREE_DAILY_LIMIT + " уведомлений в сутки и даёт до " + PRO_MAX_PCS + " ПК.\n3. Возврат: через /paysupport, возврат делается в Stars.\n4. Уведомления без гарантий: не полагайтесь на них для критичного оборудования.\n5. Храним: id чата, язык, метку источника, имена ПК и ключи устройств, счётчики. /unlink удаляет ПК.\nПриложение бесплатное, открытый код (MIT).",
+      "Условия PC Health Remote Pro\n1. Pro стоит " + PRO_PRICE_STARS + " Stars за 30 дней и продлевается, пока вы не отмените подписку в Telegram. После окончания Pro привязанные ПК остаются, снова действует лимит " + FREE_DAILY_LIMIT + " уведомлений в сутки.\n2. Pro снимает лимит " + FREE_DAILY_LIMIT + " уведомлений в сутки и даёт до " + PRO_MAX_PCS + " ПК.\n3. Возврат: через /paysupport, возврат делается в Stars.\n4. Уведомления без гарантий: не полагайтесь на них для критичного оборудования.\n5. Храним: id чата, язык, метку источника, имена ПК и ключи устройств, счётчики, записи об оплате (id платежа, сумма, дата). /unlink удаляет ПК и его ключ.\nПриложение бесплатное, открытый код (MIT).",
     support: "Ошибка или идея? Создайте issue: " + SUPPORT_URL + "\nВопросы оплаты: /paysupport",
   },
 };
@@ -195,11 +198,16 @@ async function send(env, f, chat, text) {
 }
 
 async function api(env, f, method, body) {
-  const res = await f("https://api.telegram.org/bot" + env.BOT_TOKEN + "/" + method, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let res;
+  try {
+    res = await f("https://api.telegram.org/bot" + env.BOT_TOKEN + "/" + method, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return null; // network error: callers fall back (e.g. plain limit text without the Pro offer)
+  }
   let j = null;
   try {
     j = await res.json();
@@ -214,6 +222,7 @@ const dayOf = (now) => new Date(now()).toISOString().slice(0, 10);
 
 // Pro offer text with a fresh invoice link (null if Telegram refused to create one).
 async function proOffer(env, f, chat, t) {
+  if (!(chat > 0)) return null; // group chat: payload pro30:<group> would never match the payer, so no offer
   const r = await api(env, f, "createInvoiceLink", {
     title: t.proTitle,
     description: t.proDesc,
@@ -293,11 +302,27 @@ async function getUser(kv, chat) {
   return (await getJson(kv, "user:" + chat)) || { lang: "en", src: null, pcs: {} };
 }
 
+// One private message to the admin per /paysupport (window SUPPORT_WINDOW_SEC). Other free text is ignored.
+async function handleSupportText(msg, env, f, now) {
+  const chat = msg.chat.id;
+  if (!(chat > 0) || !env.ADMIN_CHAT_ID) return;
+  const kv = env.PHR;
+  const user = await getUser(kv, chat);
+  if (!user.ask || user.ask <= now()) return;
+  delete user.ask; // one message per /paysupport
+  await kv.put("user:" + chat, JSON.stringify(user));
+  const text = msg.text.slice(0, 1000);
+  const pay = user.pro && user.pro.charge ? "\nlast charge: " + user.pro.charge : "";
+  await send(env, f, env.ADMIN_CHAT_ID, "Payment support from " + chat + " (src " + (user.src || "-") + ")" + pay + ":\n" + text + "\n\nAnswer: /reply " + chat + " <text>");
+  await send(env, f, chat, T[user.lang].sentToSupport);
+}
+
 async function handleMessage(msg, env, f, now) {
   const chat = msg.chat && msg.chat.id;
   if (chat === undefined) return;
   if (msg.successful_payment) return handlePayment(msg, env, f, now);
   if (typeof msg.text !== "string") return;
+  if (!msg.text.startsWith("/")) return handleSupportText(msg, env, f, now);
   const kv = env.PHR;
   const user = await getUser(kv, chat);
   user.lang = langOf(msg.from && msg.from.language_code);
@@ -319,8 +344,17 @@ async function handleMessage(msg, env, f, now) {
     await send(env, f, chat, t.code(code));
   } else if (cmd === "/pro") {
     await send(env, f, chat, (await proOffer(env, f, chat, t)) || t.proFail);
-  } else if (cmd === "/paysupport" || cmd === "/terms" || cmd === "/support") {
+  } else if (cmd === "/paysupport") {
+    user.ask = now() + SUPPORT_WINDOW_SEC * 1000;
+    await kv.put("user:" + chat, JSON.stringify(user));
+    await send(env, f, chat, t.paysupport);
+  } else if (cmd === "/terms" || cmd === "/support") {
     await send(env, f, chat, t[cmd.slice(1)]);
+  } else if (cmd === "/reply" && isAdmin(env, chat)) {
+    const to = Number(rest[0]);
+    const text = rest.slice(1).join(" ");
+    if (!Number.isSafeInteger(to) || !text) return void (await send(env, f, chat, "Usage: /reply <chat_id> <text>"));
+    await send(env, f, chat, (await send(env, f, to, text)) ? "Sent" : "Send failed");
   } else if (cmd === "/setcommands" && isAdmin(env, chat)) {
     let ok = true;
     for (const [lang, list] of Object.entries(COMMANDS)) {
@@ -345,6 +379,7 @@ async function handleMessage(msg, env, f, now) {
     await kv.put("pay:" + id, JSON.stringify(pay));
     const payer = await getUser(kv, pay.chat);
     if (payer.pro && payer.pro.charge === id) {
+      await api(env, f, "editUserStarSubscription", { user_id: pay.chat, telegram_payment_charge_id: id, is_canceled: true });
       delete payer.pro;
       await kv.put("user:" + pay.chat, JSON.stringify(payer));
     }

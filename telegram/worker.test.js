@@ -48,11 +48,13 @@ function setup(t0 = Date.UTC(2026, 0, 1, 12), { counter = false } = {}) {
   const sent = [];
   const calls = [];
   const clock = { t: t0 };
+  const flags = {};
   const env = { PHR: mkKv(), BOT_TOKEN: "tok", WEBHOOK_SECRET: "sec", ADMIN_CHAT_ID: "999" };
   if (counter) env.ALERT_COUNTER = mkCounterNs();
   const opts = {
     now: () => clock.t,
     fetch: async (url, init) => {
+      if (flags.failInvoice && url.endsWith("/createInvoiceLink")) throw new TypeError("network down");
       sent.push(JSON.parse(init.body));
       calls.push({ method: url.split("/").pop(), body: sent.at(-1) });
       return new Response('{"ok":true,"result":"https://t.me/$inv"}', { status: 200 });
@@ -78,7 +80,7 @@ function setup(t0 = Date.UTC(2026, 0, 1, 12), { counter = false } = {}) {
         },
       },
     });
-  return { env, sent, calls, clock, call, say, upd, pay };
+  return { env, sent, calls, clock, call, say, upd, pay, flags };
 }
 
 async function pair(s, name = "GAMING-PC", chat = 1) {
@@ -355,7 +357,7 @@ test("Durable Object counter forgets the day via its alarm", async () => {
 
 test("/paysupport, /terms, /support answer in EN and RU", async () => {
   const s = setup();
-  for (const [cmd, re] of [["/paysupport", /refund/i], ["/terms", /99 Stars per 30 days/], ["/support", /github\.com\/ataman-lab\/pc-health-remote\/issues/]]) {
+  for (const [cmd, re] of [["/paysupport", /refundable/i], ["/terms", /99 Stars per 30 days/], ["/support", /github\.com\/ataman-lab\/pc-health-remote\/issues/]]) {
     await s.say(cmd, { language_code: "en" }, 7);
     assert.match(s.sent.at(-1).text, re);
   }
@@ -392,4 +394,60 @@ test("/setcommands is admin only and sets EN + RU menus", async () => {
   assert.ok(sc[0].body.commands.some((c) => c.command === "paysupport"));
   assert.equal(sc[1].body.language_code, "ru");
   assert.equal(s.sent.at(-1).text, "Commands set");
+});
+
+test("/paysupport: next text goes privately to the admin once; admin answers with /reply", async () => {
+  const s = setup();
+  await s.say("hello", {}, 7); // free text without /paysupport is ignored
+  assert.equal(s.sent.length, 0);
+  await s.say("/paysupport", { language_code: "en" }, 7);
+  await s.say("paid 99 stars yesterday, no Pro", {}, 7);
+  const toAdmin = s.sent.find((m) => m.chat_id === "999");
+  assert.match(toAdmin.text, /from 7/);
+  assert.match(toAdmin.text, /paid 99 stars/);
+  assert.match(s.sent.at(-1).text, /Sent to the developer/);
+  const n = s.sent.length;
+  await s.say("second message", {}, 7); // window used up
+  assert.equal(s.sent.length, n);
+  await s.say("/reply 7 Refunded, sorry", {}, 1); // not admin
+  assert.equal(s.sent.length, n);
+  await s.say("/reply 7 Refunded, sorry", {}, 999);
+  assert.deepEqual([s.sent.at(-2).chat_id, s.sent.at(-2).text], [7, "Refunded, sorry"]);
+  assert.equal(s.sent.at(-1).text, "Sent");
+});
+
+test("/paysupport window expires after 1 hour", async () => {
+  const s = setup();
+  await s.say("/paysupport", {}, 7);
+  s.clock.t += 3601 * 1000;
+  const n = s.sent.length;
+  await s.say("late", {}, 7);
+  assert.equal(s.sent.length, n);
+});
+
+test("/refund of the current charge also cancels the Stars subscription", async () => {
+  const s = setup();
+  await s.pay("ch1", 5);
+  await s.say("/refund ch1", {}, 999);
+  const c = s.calls.find((x) => x.method === "editUserStarSubscription");
+  assert.deepEqual(c.body, { user_id: 5, telegram_payment_charge_id: "ch1", is_canceled: true });
+});
+
+test("upsell: no invoice in group chats; network error falls back to the plain limit text", async () => {
+  const s = setup();
+  await pair(s, "A", -100);
+  assert.equal((await pair(s, "B", -100)).r.status, 403);
+  assert.equal(s.calls.some((c) => c.method === "createInvoiceLink"), false);
+  assert.match(s.sent.at(-1).text, /free plan/);
+  // network error on createInvoiceLink: the limit note still arrives, without the offer
+  const s2 = setup();
+  const { body } = await pair(s2);
+  const h = { "X-Device-Key": body.device_key };
+  s2.flags.failInvoice = true;
+  for (let i = 0; i < FREE_DAILY_LIMIT; i++) await s2.call("/alert", { rule: "cpu_temp", value: 90 }, h);
+  assert.equal((await s2.call("/alert", { rule: "cpu_temp", value: 90 }, h)).status, 429);
+  assert.match(s2.sent.at(-1).text, /limit/i);
+  assert.doesNotMatch(s2.sent.at(-1).text, /t\.me/);
+  assert.equal((await pair(s2, "B")).r.status, 403);
+  assert.match(s2.sent.at(-1).text, /free plan/);
 });
