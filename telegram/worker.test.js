@@ -161,13 +161,17 @@ test("daily limit, one note, resets next UTC day", async () => {
   const { body } = await pair(s);
   const h = { "X-Device-Key": body.device_key };
   const a = { rule: "cpu_temp", value: 90, threshold: 85, unit: "C" };
-  const before = s.sent.length;
+  const msgs = () => s.calls.filter((c) => c.method === "sendMessage").length;
+  const before = msgs();
   for (let i = 0; i < FREE_DAILY_LIMIT; i++) assert.equal((await s.call("/alert", a, h)).status, 200);
-  assert.equal(s.sent.length - before, FREE_DAILY_LIMIT);
+  assert.equal(msgs() - before, FREE_DAILY_LIMIT);
   assert.equal((await s.call("/alert", a, h)).status, 429);
   assert.equal((await s.call("/alert", a, h)).status, 429);
-  assert.equal(s.sent.length - before, FREE_DAILY_LIMIT + 1);
+  assert.equal(msgs() - before, FREE_DAILY_LIMIT + 1);
   assert.match(s.sent.at(-1).text, /limit/i);
+  // Upsell: the one limit note carries the Pro invoice link.
+  assert.match(s.sent.at(-1).text, /https:\/\/t\.me\/\$inv/);
+  assert.equal(s.calls.filter((c) => c.method === "createInvoiceLink").length, 1);
   s.clock.t += 24 * 3600 * 1000;
   assert.equal((await s.call("/alert", a, h)).status, 200);
 });
@@ -327,11 +331,12 @@ test("Durable Object counter: limit enforced, one note, resets next UTC day, /st
   const { body } = await pair(s);
   const h = { "X-Device-Key": body.device_key };
   const a = { rule: "cpu_temp", value: 90 };
-  const before = s.sent.length;
+  const msgs = () => s.calls.filter((c) => c.method === "sendMessage").length;
+  const before = msgs();
   for (let i = 0; i < FREE_DAILY_LIMIT; i++) assert.equal((await s.call("/alert", a, h)).status, 200);
   assert.equal((await s.call("/alert", a, h)).status, 429);
   assert.equal((await s.call("/alert", a, h)).status, 429);
-  assert.equal(s.sent.length - before, FREE_DAILY_LIMIT + 1); // 10 alerts + one limit note
+  assert.equal(msgs() - before, FREE_DAILY_LIMIT + 1); // 10 alerts + one limit note (with Pro offer)
   await s.say("/status");
   assert.match(s.sent.at(-1).text, new RegExp(String(FREE_DAILY_LIMIT)));
   s.clock.t += 24 * 3600 * 1000;
@@ -346,4 +351,45 @@ test("Durable Object counter forgets the day via its alarm", async () => {
   assert.ok(obj.storage.alarm > Date.now());
   await obj.alarm();
   assert.equal(obj.storage.data.size, 0);
+});
+
+test("/paysupport, /terms, /support answer in EN and RU", async () => {
+  const s = setup();
+  for (const [cmd, re] of [["/paysupport", /refund/i], ["/terms", /99 Stars per 30 days/], ["/support", /github\.com\/ataman-lab\/pc-health-remote\/issues/]]) {
+    await s.say(cmd, { language_code: "en" }, 7);
+    assert.match(s.sent.at(-1).text, re);
+  }
+  for (const [cmd, re] of [["/paysupport", /возврат/i], ["/terms", /99 Stars за 30 дней/], ["/support", /issue/]]) {
+    await s.say(cmd, { language_code: "ru" }, 7);
+    assert.match(s.sent.at(-1).text, re);
+  }
+  await s.say("/start", { language_code: "en" }, 7);
+  assert.match(s.sent.at(-1).text, /\/paysupport/);
+});
+
+test("PC limit: free user is told in chat with a Pro offer; Pro user without offer", async () => {
+  const s = setup();
+  await pair(s, "A");
+  assert.equal((await pair(s, "B")).r.status, 403);
+  assert.match(s.sent.at(-1).text, /not linked.*free plan/s);
+  assert.match(s.sent.at(-1).text, /https:\/\/t\.me\/\$inv/);
+  assert.equal(s.sent.at(-1).chat_id, 1);
+  await s.pay("ch1");
+  for (const n of ["B", "C", "D", "E"]) await pair(s, n);
+  const inv = s.calls.filter((c) => c.method === "createInvoiceLink").length;
+  assert.equal((await pair(s, "F")).r.status, 403);
+  assert.match(s.sent.at(-1).text, /Pro allows up to 5/);
+  assert.equal(s.calls.filter((c) => c.method === "createInvoiceLink").length, inv);
+});
+
+test("/setcommands is admin only and sets EN + RU menus", async () => {
+  const s = setup();
+  await s.say("/setcommands", {}, 1);
+  assert.equal(s.calls.some((c) => c.method === "setMyCommands"), false);
+  await s.say("/setcommands", {}, 999);
+  const sc = s.calls.filter((c) => c.method === "setMyCommands");
+  assert.equal(sc.length, 2);
+  assert.ok(sc[0].body.commands.some((c) => c.command === "paysupport"));
+  assert.equal(sc[1].body.language_code, "ru");
+  assert.equal(s.sent.at(-1).text, "Commands set");
 });
