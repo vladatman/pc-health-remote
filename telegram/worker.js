@@ -413,7 +413,9 @@ async function handlePair(req, env, f, now) {
     if (!isPro(user, now)) {
       // Upsell in the chat; the PC still gets the same 403 JSON. Repeats only when the user pairs again with a fresh code.
       const t = T[user.lang];
-      await send(env, f, rec.chat, t.pcLimit + "\n" + (await proOffer(env, f, t, rec.chat)));
+      try {
+        await send(env, f, rec.chat, t.pcLimit + "\n" + (await proOffer(env, f, t, rec.chat)));
+      } catch (_) {} // Telegram down must not turn the PC's 403 into a 500
     }
     return json({ error: "pc limit reached" }, 403);
   }
