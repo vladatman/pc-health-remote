@@ -554,3 +554,20 @@ test("navigation: Help submenu with Back, My PCs with per-PC unlink buttons", as
   await s.say("❌ Отвязать: Ghost", { language_code: "ru" }, 8);
   assert.match(s.sent.at(-1).text, /Нет такого ПК: Ghost/);
 });
+
+test("default export applies the profile automatically once (GET / after deploy)", async (t) => {
+  const { default: w } = await import("./worker.js");
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url) => { calls.push(url.split("/").pop()); return new Response('{"ok":true}'); });
+  const env = { PHR: mkKv(), BOT_TOKEN: "tok", WEBHOOK_SECRET: "sec", ADMIN_CHAT_ID: "999" };
+  const waits = [];
+  const ctx = { waitUntil: (p) => waits.push(p) };
+  assert.equal((await w.fetch(new Request("https://x/"), env, ctx)).status, 200);
+  await Promise.all(waits);
+  assert.deepEqual(calls.filter((m) => m === "setMyDescription").length, 3);
+  assert.ok(calls.includes("setMyProfilePhoto"));
+  const n = calls.length;
+  await w.fetch(new Request("https://x/"), env, ctx);
+  await Promise.all(waits);
+  assert.equal(calls.length, n, "second request: already applied");
+});

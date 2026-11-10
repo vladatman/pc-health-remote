@@ -3,7 +3,7 @@
 // Logs never contain keys or message text.
 
 import { hitCounter } from "./alert-counter.js";
-import { applyProfile } from "./bot-profile.js";
+import { applyProfile, autoProfile } from "./bot-profile.js";
 import { PROFILE } from "./profile.js";
 import { AVATARS } from "./avatar.js";
 
@@ -595,7 +595,10 @@ export async function handle(req, env, { fetch: f = fetch, now = Date.now } = {}
 }
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
+    // Profile (descriptions, menus, avatar) applies itself once per version; the deploy's GET / triggers it.
+    const langs = Object.fromEntries(Object.entries(PROFILE.langs).map(([l, p]) => [l, COMMANDS[l] ? { ...p, commands: COMMANDS[l] } : p]));
+    ctx?.waitUntil?.(autoProfile({ kv: env.PHR, token: env.BOT_TOKEN, profile: { ...PROFILE, langs }, avatar: AVATARS[PROFILE.avatar] }).catch(() => {}));
     try {
       return await handle(req, env);
     } catch (e) {

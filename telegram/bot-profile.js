@@ -44,3 +44,22 @@ export async function applyProfile({ token, profile, avatar, fetch: f = fetch })
   }
   return failed;
 }
+
+// Automatic mode: the Worker applies its profile once per profile version, without any admin command.
+// Called from the default export (webhook, GET probes after deploy, cron) via ctx.waitUntil. KV key `bot-profile`
+// holds the applied version; after a failure it holds `wait:<version>` for an hour so Telegram is not hammered.
+const fnv = text => { let h = 0x811c9dc5; for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619) >>> 0; return h.toString(36); };
+let applied = '';
+export async function autoProfile({ kv, token, profile, avatar, fetch: f = fetch }) {
+  if (!kv?.get || !kv?.put || !token) return null;
+  const version = fnv(JSON.stringify(profile) + (avatar || ''));
+  if (applied === version) return null;
+  const stored = await kv.get('bot-profile');
+  if (stored === version || stored === `wait:${version}`) { applied = version; return null; }
+  const failed = await applyProfile({ token, profile, avatar, fetch: f });
+  applied = version;
+  await kv.put('bot-profile', failed.length ? `wait:${version}` : version, failed.length ? { expirationTtl: 3600 } : undefined);
+  console.log(JSON.stringify({ botProfile: failed.length ? { failed } : 'applied' }));
+  return failed;
+}
+export const resetAutoProfile = () => { applied = ''; }; // tests only
