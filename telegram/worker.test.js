@@ -55,7 +55,7 @@ function setup(t0 = Date.UTC(2026, 0, 1, 12), { counter = false } = {}) {
     now: () => clock.t,
     fetch: async (url, init) => {
       if (flags.failInvoice && url.endsWith("/createInvoiceLink")) throw new TypeError("network down");
-      sent.push(JSON.parse(init.body));
+      sent.push(init.body instanceof FormData ? Object.fromEntries(init.body) : JSON.parse(init.body));
       calls.push({ method: url.split("/").pop(), body: sent.at(-1) });
       return new Response('{"ok":true,"result":"https://t.me/$inv"}', { status: 200 });
     },
@@ -394,6 +394,23 @@ test("/setcommands is admin only and sets EN + RU menus", async () => {
   assert.ok(sc[0].body.commands.some((c) => c.command === "paysupport"));
   assert.equal(sc[1].body.language_code, "ru");
   assert.equal(s.sent.at(-1).text, "Commands set");
+});
+
+test("/brand is admin only: en default + uk/ru descriptions, EN/RU menus, JPEG avatar", async () => {
+  const { PROFILE } = await import("./profile.js");
+  const { checkProfile } = await import("./bot-profile.js");
+  assert.deepEqual(checkProfile(PROFILE), []);
+  const s = setup();
+  await s.say("/brand", {}, 1);
+  assert.equal(s.calls.some((c) => c.method.startsWith("setMy")), false);
+  await s.say("/brand", {}, 999);
+  const desc = s.calls.filter((c) => c.method === "setMyDescription");
+  assert.deepEqual(desc.map((c) => c.body.language_code), [undefined, "uk", "ru"]);
+  const menus = s.calls.filter((c) => c.method === "setMyCommands");
+  assert.deepEqual(menus.map((c) => c.body.language_code), [undefined, "ru"]);
+  assert.ok(menus[0].body.commands.some((c) => c.command === "paysupport"));
+  assert.equal(s.calls.find((c) => c.method === "setMyProfilePhoto").body.avatar.type, "image/jpeg");
+  assert.match(s.sent.at(-1).text, /^Profile set/);
 });
 
 test("/paysupport: next text goes privately to the admin once; admin answers with /reply", async () => {

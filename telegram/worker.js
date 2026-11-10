@@ -3,6 +3,9 @@
 // Logs never contain keys or message text.
 
 import { hitCounter } from "./alert-counter.js";
+import { applyProfile } from "./bot-profile.js";
+import { PROFILE } from "./profile.js";
+import { AVATARS } from "./avatar.js";
 
 export const FREE_DAILY_LIMIT = 10; // alerts per chat per UTC day (Pro: unlimited)
 export const PRO_PRICE_STARS = 99; // Telegram Stars per 30 days
@@ -448,6 +451,11 @@ async function handleMessage(msg, env, f, now) {
       ok = !!(await api(env, f, "setMyCommands", lang === "en" ? { commands } : { commands, language_code: lang })) && ok;
     }
     await send(env, f, chat, ok ? "Commands set" : "setMyCommands failed");
+  } else if (cmd === "/brand" && isAdmin(env, chat)) {
+    // Descriptions (profile.js), command menus (COMMANDS) and avatar (avatar.js) in one go.
+    const langs = Object.fromEntries(Object.entries(PROFILE.langs).map(([l, p]) => [l, COMMANDS[l] ? { ...p, commands: COMMANDS[l] } : p]));
+    const failed = await applyProfile({ token: env.BOT_TOKEN, profile: { ...PROFILE, langs }, avatar: AVATARS[PROFILE.avatar], fetch: f });
+    await send(env, f, chat, failed.length ? "Profile: failed " + failed.join(", ") : "Profile set: en/uk/ru descriptions, commands, avatar.");
   } else if (cmd === "/status") {
     const used = await counter(env, "cnt:" + chat + ":" + dayOf(now)).peek();
     const pro = isPro(user, now);
