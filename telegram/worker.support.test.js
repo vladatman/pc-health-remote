@@ -61,3 +61,12 @@ test("/hq-reply needs the HQ token", async () => {
   assert.equal((await s.post({ uid: 5, text: "Починили!" }, "hq")).status, 200);
   assert.deepEqual(s.sent.at(-1), { chat_id: 5, text: "💬 Починили!" });
 });
+
+test("/support then /paysupport: the payment text goes to the admin, not to HQ", async () => {
+  const s = setup();
+  await s.say("/support");
+  await s.say("/paysupport");
+  await s.say("Списали дважды");
+  assert.equal(s.tickets.length, 0);
+  assert.ok(s.sent.some((m) => m.chat_id === "999" && /Списали дважды/.test(m.text)));
+});

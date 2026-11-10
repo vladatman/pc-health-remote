@@ -1,7 +1,7 @@
 // Copy of overclock-lab infra/hq-desk/client.js (support department, HQ inbox). Keep in sync with that file.
 // HQ client for the bots (Theorie 44, KNM, Zrozumilo, PC Health, ...). Zero dependencies, Workers + Node.
 // The bot binds the hq-desk Worker as service HQ and has the secret HQ_TOKEN. Without them support still answers
-// with a polite fallback, so a bot never breaks because HQ is down.
+// with an honest "not sent, try later" note, so a bot never breaks and never promises a reply it cannot give.
 
 export const SUPPORT_WINDOW_MS = 15 * 60 * 1000; // after /support, the next text message goes to support
 export const MAX_TEXT = 2000;
@@ -10,23 +10,25 @@ export const SUPPORT_COPY = {
   en: {
     ask: '💬 Support: write your question, idea or problem in one message. An AI answers right away; if it needs a human, the team replies here within 24 hours. Your message is stored up to 30 days to handle it.',
     empty: 'Send /support and then your message as text.',
-    down: 'Thanks, message received. The team will reply here within 24 hours.',
+    down: 'Support is temporarily unavailable, your message was not sent. Please try again in an hour; payment questions: /paysupport.',
     button: '💬 Support',
   },
   ru: {
     ask: '💬 Поддержка: напишите вопрос, идею или проблему одним сообщением. ИИ ответит сразу; если нужен человек, команда ответит здесь в течение 24 часов. Сообщение хранится до 30 дней для обработки.',
     empty: 'Отправьте /support, а затем ваше сообщение текстом.',
-    down: 'Спасибо, сообщение получено. Команда ответит здесь в течение 24 часов.',
+    down: 'Поддержка временно недоступна, сообщение не отправлено. Попробуйте через час; вопросы оплаты: /paysupport.',
     button: '💬 Поддержка',
   },
   uk: {
     ask: '💬 Підтримка: напишіть запитання, ідею або проблему одним повідомленням. ШІ відповість одразу; якщо потрібна людина, команда відповість тут протягом 24 годин. Повідомлення зберігається до 30 днів для обробки.',
     empty: 'Надішліть /support, а потім ваше повідомлення текстом.',
-    down: 'Дякуємо, повідомлення отримано. Команда відповість тут протягом 24 годин.',
+    down: 'Підтримка тимчасово недоступна, повідомлення не надіслано. Спробуйте за годину; питання оплати: /paysupport.',
     button: '💬 Підтримка',
   },
 };
 export const supportCopy = lang => SUPPORT_COPY[lang] || SUPPORT_COPY.en;
+// True when this bot can reach HQ (binding + token); bots show the support button and window only then.
+export const hqOn = env => Boolean(env.HQ?.fetch && env.HQ_TOKEN);
 
 // Shared person reference (agreed with monitoring): first 12 hex of HMAC-SHA256(LAB_REF_KEY, "tg:<id>").
 export async function labRef(env, tgId) {

@@ -3,7 +3,7 @@
 // Logs never contain keys or message text.
 
 import { hitCounter } from "./alert-counter.js";
-import { supportTicket, supportCopy, readHqReply, SUPPORT_WINDOW_MS } from "./hq-client.js";
+import { supportTicket, supportCopy, readHqReply, hqOn, SUPPORT_WINDOW_MS } from "./hq-client.js";
 
 export const FREE_DAILY_LIMIT = 10; // alerts per chat per UTC day (Pro: unlimited)
 export const PRO_PRICE_STARS = 99; // Telegram Stars per 30 days
@@ -384,7 +384,6 @@ async function getUser(kv, chat) {
 
 // One private message to the admin per /paysupport (window SUPPORT_WINDOW_SEC). Other free text is ignored.
 // Support department (overclock-lab infra/hq-desk): AI answers at once, Vlad is alerted when a human is needed.
-const hqOn = (env) => Boolean(env.HQ && env.HQ.fetch && env.HQ_TOKEN);
 async function hqTicket(env, f, chat, user, text, msg) {
   const reply = await supportTicket(env, { src: "pchealth", lang: user.lang, uid: chat, text, key: chat + ":" + (msg.message_id || msg.date || "") });
   await send(env, f, chat, reply);
@@ -446,12 +445,14 @@ async function handleMessage(msg, env, f, now) {
     await sendWithOffer(env, f, chat, t);
   } else if (cmd === "/paysupport") {
     user.ask = now() + SUPPORT_WINDOW_SEC * 1000;
+    delete user.sup; // a payment question goes to the admin /reply flow, never to the AI desk
     await kv.put("user:" + chat, JSON.stringify(user));
     await send(env, f, chat, t.paysupport);
   } else if (cmd === "/support" && hqOn(env)) {
     const body = text.trim().replace(/^\S+\s*/, "");
     if (body) return hqTicket(env, f, chat, user, body, msg);
     user.sup = now() + SUPPORT_WINDOW_MS;
+    delete user.ask;
     await kv.put("user:" + chat, JSON.stringify(user));
     await send(env, f, chat, supportCopy(user.lang).ask);
   } else if (cmd === "/terms" || cmd === "/support") {
