@@ -413,6 +413,24 @@ test("/brand is admin only: en default + uk/ru descriptions, EN/RU menus, JPEG a
   assert.match(s.sent.at(-1).text, /^Profile set/);
 });
 
+test("/brand reports failed steps (ok:false, network error, bad JSON) without the token", async () => {
+  const replies = [];
+  const env = { PHR: mkKv(), BOT_TOKEN: "123:secret-token", WEBHOOK_SECRET: "sec", ADMIN_CHAT_ID: "999" };
+  const f = async (url, init) => {
+    const method = url.split("/").pop();
+    if (method === "sendMessage") { replies.push(JSON.parse(init.body).text); return new Response('{"ok":true,"result":{}}'); }
+    if (method === "setMyShortDescription") return new Response('{"ok":false,"description":"bad 123:secret-token"}');
+    if (method === "setMyProfilePhoto") throw new TypeError("network down 123:secret-token");
+    if (method === "setMyCommands") return new Response("not json");
+    return new Response('{"ok":true,"result":true}');
+  };
+  await handle(new Request("https://x/tg", { method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": "sec" },
+    body: JSON.stringify({ message: { chat: { id: 999 }, from: {}, text: "/brand" } }) }), env, { now: () => 0, fetch: f });
+  const reply = replies.at(-1);
+  assert.match(reply, /^Profile: failed short:en, commands:en, short:uk, short:ru, commands:ru, photo$/);
+  assert.equal(reply.includes("secret-token"), false);
+});
+
 test("/paysupport: next text goes privately to the admin once; admin answers with /reply", async () => {
   const s = setup();
   await s.say("hello", {}, 7); // free text without /paysupport is ignored
