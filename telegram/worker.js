@@ -453,7 +453,11 @@ async function handleMessage(msg, env, f, now) {
     await send(env, f, chat, t.paysupport);
   } else if (cmd === "/support" && hqOn(env)) {
     const body = text.trim().replace(/^\S+\s*/, "");
-    if (body) return hqTicket(env, f, chat, user, body, msg);
+    if (body) {
+      // An inline ticket closes any open window, so the next plain message is not sent again (AI desk or payment admin).
+      if (user.sup || user.ask) { delete user.sup; delete user.ask; await kv.put("user:" + chat, JSON.stringify(user)); }
+      return hqTicket(env, f, chat, user, body, msg);
+    }
     user.sup = now() + SUPPORT_WINDOW_MS;
     delete user.ask;
     await kv.put("user:" + chat, JSON.stringify(user));
